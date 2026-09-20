@@ -165,11 +165,11 @@ export async function saveModifiedPdf(
         const origW = block.originalWidth !== undefined ? block.originalWidth : block.width;
         const origH = block.originalHeight !== undefined ? block.originalHeight : block.height;
 
-        // Mask strictly covers the original text location
+        // Mask covers original text location and any expanded block bounds
         const maskX = origX - padX;
         const maskTop = origY - padY;
-        const maskW = origW + padX * 2;
-        const maskH = origH + padY * 2;
+        const maskW = Math.max(origW, block.width) + padX * 2;
+        const maskH = Math.max(origH, block.height) + padY * 2;
         const pdfY = pageHeight - maskTop - maskH;
 
         if (block.backgroundColor && block.backgroundColor !== 'transparent') {

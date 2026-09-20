@@ -127,9 +127,9 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
     origY: number;
   } | null>(null);
 
-  // Resize state for images and shapes
+  // Resize state for images, shapes, and text
   const [resizeHandle, setResizeHandle] = useState<{
-    type?: 'image' | 'shape';
+    type?: 'image' | 'shape' | 'text';
     id: string;
     handle: string;
     startX: number;
@@ -300,6 +300,14 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
           width: Math.round(newW),
           height: Math.round(newH),
         });
+      } else if (resizeHandle.type === 'text') {
+        onUpdateTextBlock(resizeHandle.id, {
+          x: Math.round(newX),
+          y: Math.round(newY),
+          width: Math.round(newW),
+          height: Math.round(newH),
+          isModified: true,
+        });
       } else {
         onUpdateImage(resizeHandle.id, {
           x: Math.round(newX),
@@ -420,8 +428,8 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
 
         const left = (origX - padX) * scale;
         const top = (origY - padY) * scale;
-        const bWidth = (origW + padX * 2) * scale;
-        const bHeight = (origH + padY * 2) * scale;
+        const bWidth = (Math.max(origW, block.width) + padX * 2) * scale;
+        const bHeight = (Math.max(origH, block.height) + padY * 2) * scale;
 
         return (
           <div
@@ -711,6 +719,7 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
           <div
             key={block.id}
             onClick={(e) => {
+              if ((e.target as HTMLElement).classList.contains('resize-handle')) return;
               e.stopPropagation();
               let curBg = block.backgroundColor;
               let curColor = block.color;
@@ -722,9 +731,25 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                 }
               }
               const isEnteringEdit = toolMode === 'editText';
+
+              let neededW = block.width;
+              try {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.font = `${block.isBold ? 'bold ' : ''}${block.fontSize}px ${block.fontFamily || 'sans-serif'}`;
+                  const lines = block.text.split('\n');
+                  const maxLineWidth = Math.max(...lines.map((l) => ctx.measureText(l).width));
+                  if (maxLineWidth > block.width - 6) {
+                    neededW = Math.ceil(maxLineWidth + 14);
+                  }
+                }
+              } catch {}
+
               onUpdateTextBlock(block.id, {
                 backgroundColor: curBg,
                 color: curColor,
+                width: neededW,
                 ...(isEnteringEdit ? { isModified: true } : {}),
               });
               onSelectTextBlock(block);
@@ -733,6 +758,7 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
               }
             }}
             onDoubleClick={(e) => {
+              if ((e.target as HTMLElement).classList.contains('resize-handle')) return;
               e.stopPropagation();
               let curBg = block.backgroundColor;
               let curColor = block.color;
@@ -743,15 +769,32 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                   curColor = sampled.color;
                 }
               }
+
+              let neededW = block.width;
+              try {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.font = `${block.isBold ? 'bold ' : ''}${block.fontSize}px ${block.fontFamily || 'sans-serif'}`;
+                  const lines = block.text.split('\n');
+                  const maxLineWidth = Math.max(...lines.map((l) => ctx.measureText(l).width));
+                  if (maxLineWidth > block.width - 6) {
+                    neededW = Math.ceil(maxLineWidth + 14);
+                  }
+                }
+              } catch {}
+
               onUpdateTextBlock(block.id, {
                 backgroundColor: curBg,
                 color: curColor,
+                width: neededW,
                 isModified: true,
               });
               onSelectTextBlock(block);
               setEditingTextId(block.id);
             }}
             onPointerDown={(e) => {
+              if ((e.target as HTMLElement).classList.contains('resize-handle')) return;
               if (toolMode === 'select' && !isEditing) {
                 e.stopPropagation();
                 const rect = containerRef.current?.getBoundingClientRect();
@@ -807,8 +850,28 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                 rows={block.text.split('\n').length || 1}
                 value={block.text}
                 onChange={(e) => {
+                  const newText = e.target.value;
+                  let newWidth = block.width;
+                  try {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    if (ctx) {
+                      ctx.font = `${block.isBold ? 'bold ' : ''}${block.fontSize}px ${block.fontFamily || 'sans-serif'}`;
+                      const lines = newText.split('\n');
+                      const maxLineWidth = Math.max(...lines.map((l) => ctx.measureText(l).width));
+                      if (maxLineWidth > block.width - 6) {
+                        newWidth = Math.ceil(maxLineWidth + 16);
+                      }
+                    }
+                  } catch {}
+
+                  const linesCount = newText.split('\n').length;
+                  const minHeight = Math.max(block.height, Math.round(linesCount * block.fontSize * 1.25));
+
                   onUpdateTextBlock(block.id, {
-                    text: e.target.value,
+                    text: newText,
+                    width: newWidth,
+                    height: minHeight,
                     isModified: true,
                   });
                 }}
@@ -831,13 +894,16 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                   fontStyle: block.isItalic ? 'italic' : 'normal',
                   textAlign: block.align || 'left',
                   lineHeight: 1.05,
+                  whiteSpace: block.text.includes('\n') ? 'pre-wrap' : 'nowrap',
                   border: '1px dashed #3B82F6',
                   boxSizing: 'border-box',
                 }}
               />
             ) : isModifiedOrNew ? (
               <div
-                className="w-full h-full whitespace-pre-wrap leading-[1.05]"
+                className={`w-full h-full leading-[1.05] ${
+                  block.text.includes('\n') ? 'whitespace-pre-wrap' : 'whitespace-nowrap'
+                }`}
                 style={{
                   backgroundColor: 'transparent',
                   color: block.color,
@@ -847,9 +913,73 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
               </div>
             ) : (
               // Transparent placeholder allowing original rendered PDF canvas text to show through
-              <div className="w-full h-full opacity-0">
+              <div className="w-full h-full opacity-0 whitespace-nowrap">
                 {block.text}
               </div>
+            )}
+
+            {/* Resize Handles (8 handles) for resizing text block width and height */}
+            {(isSelected || isEditing) && (
+              <>
+                {['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'].map((handle) => {
+                  let cursor = 'cursor-pointer';
+                  let handleStyle: React.CSSProperties = {};
+                  const size = 8;
+                  const half = size / 2;
+
+                  if (handle === 'nw') {
+                    cursor = 'cursor-nwse-resize';
+                    handleStyle = { left: -half, top: -half };
+                  } else if (handle === 'ne') {
+                    cursor = 'cursor-nesw-resize';
+                    handleStyle = { right: -half, top: -half };
+                  } else if (handle === 'sw') {
+                    cursor = 'cursor-nesw-resize';
+                    handleStyle = { left: -half, bottom: -half };
+                  } else if (handle === 'se') {
+                    cursor = 'cursor-nwse-resize';
+                    handleStyle = { right: -half, bottom: -half };
+                  } else if (handle === 'n') {
+                    cursor = 'cursor-ns-resize';
+                    handleStyle = { left: '50%', top: -half, transform: 'translateX(-50%)' };
+                  } else if (handle === 's') {
+                    cursor = 'cursor-ns-resize';
+                    handleStyle = { left: '50%', bottom: -half, transform: 'translateX(-50%)' };
+                  } else if (handle === 'w') {
+                    cursor = 'cursor-ew-resize';
+                    handleStyle = { left: -half, top: '50%', transform: 'translateY(-50%)' };
+                  } else if (handle === 'e') {
+                    cursor = 'cursor-ew-resize';
+                    handleStyle = { right: -half, top: '50%', transform: 'translateY(-50%)' };
+                  }
+
+                  return (
+                    <div
+                      key={handle}
+                      className={`resize-handle absolute w-2 h-2 bg-white border-2 border-blue-600 rounded-sm shadow-sm z-30 ${cursor}`}
+                      style={handleStyle}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        const rect = containerRef.current?.getBoundingClientRect();
+                        if (!rect) return;
+                        const ptX = (e.clientX - rect.left) / scale;
+                        const ptY = (e.clientY - rect.top) / scale;
+                        setResizeHandle({
+                          type: 'text',
+                          id: block.id,
+                          handle,
+                          startX: ptX,
+                          startY: ptY,
+                          origX: block.x,
+                          origY: block.y,
+                          origW: block.width,
+                          origH: block.height,
+                        });
+                      }}
+                    />
+                  );
+                })}
+              </>
             )}
           </div>
         );
