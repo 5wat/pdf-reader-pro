@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --mac-bg: #F5F5F7;
+    --mac-card: #FFFFFF;
+    --mac-border: #E5E5EA;
+  }
+
+  .dark {
+    --mac-bg: #1C1C1E;
+    --mac-card: #2C2C2E;
+    --mac-border: #3A3A3C;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 150, 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 150, 150, 0.5);
+}
+
+/* Canvas selection styles */
+.handle-cursor-nwse { cursor: nwse-resize; }
+.handle-cursor-nesw { cursor: nesw-resize; }
+.handle-cursor-ns { cursor: ns-resize; }
+.handle-cursor-ew { cursor: ew-resize; }

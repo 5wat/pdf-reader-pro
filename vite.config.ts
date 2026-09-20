@@ -1,0 +1,23 @@
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+
+export default defineConfig({
+  base: './',
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+  optimizeDeps: {
+    include: ['pdfjs-dist', 'pdf-lib', '@pdf-lib/fontkit'],
+  },
+  build: {
+    target: 'esnext',
+  },
+  server: {
+    port: 5173,
+    open: false,
+  },
+});
