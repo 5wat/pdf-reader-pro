@@ -331,6 +331,66 @@ function pingServer(action: string, data: any): void {
   } catch {}
 }
 
+// Asynchronously syncs with InfinityFree PHP server to fetch global real visitor stats
+export async function syncServerAnalytics(): Promise<void> {
+  try {
+    const res = await fetch('/api/analytics.php?action=stats');
+    if (!res.ok) return;
+    const json = await res.json();
+    if (json.status === 'ok' && json.data) {
+      const serverStore = json.data;
+      if (Array.isArray(serverStore.sessions)) {
+        const localSessions = getStoredSessions();
+        const localMap = new Map(localSessions.map((s) => [s.sessionId, s]));
+        for (const s of serverStore.sessions) {
+          if (!localMap.has(s.id)) {
+            localMap.set(s.id, {
+              sessionId: s.id,
+              visitorId: s.vid || 'remote',
+              startTime: (s.time || 0) * 1000,
+              lastActive: (s.time || 0) * 1000 + (s.duration || 0) * 1000,
+              durationSeconds: s.duration || 0,
+              referrer: s.referrer || 'Прямий перехід',
+              referrerCategory: 'Зовнішній',
+              device: (s.device as any) || 'desktop',
+              os: s.os || 'Інша',
+              browser: s.browser || 'Інший',
+              screen: 'N/A',
+              language: 'uk',
+            });
+          }
+        }
+        saveStoredSessions(Array.from(localMap.values()));
+      }
+
+      if (Array.isArray(serverStore.events)) {
+        const localEvents = getStoredEvents();
+        const localEventSet = new Set(localEvents.map((e) => `${e.timestamp}_${e.action}`));
+        let added = false;
+        for (const ev of serverStore.events) {
+          const evTime = (ev.time || 0) * 1000;
+          const key = `${evTime}_${ev.act}`;
+          if (!localEventSet.has(key)) {
+            localEvents.push({
+              id: 'evt_srv_' + Math.random().toString(36).substring(2, 7),
+              timestamp: evTime,
+              visitorId: 'srv',
+              sessionId: 'srv',
+              category: ev.cat || 'tool',
+              action: ev.act || '',
+              value: ev.val,
+            });
+            added = true;
+          }
+        }
+        if (added) {
+          saveStoredEvents(localEvents);
+        }
+      }
+    }
+  } catch {}
+}
+
 // Clear analytics
 export function clearAnalytics(): void {
   try {
@@ -339,10 +399,9 @@ export function clearAnalytics(): void {
   } catch {}
 }
 
-// Aggregation Engine
+// Aggregation Engine - STRICTLY REAL METRICS ONLY (NO DEMO / MOCK DATA)
 export function getAnalyticsSummary(
-  period: 'today' | '7d' | '30d' | 'all' = '7d',
-  includeDemo: boolean = true
+  period: 'today' | '7d' | '30d' | 'all' = '7d'
 ): AnalyticsSummary {
   const sessions = getStoredSessions();
   const events = getStoredEvents();
@@ -361,39 +420,26 @@ export function getAnalyticsSummary(
     cutoff = now - 30 * msInDay;
   }
 
-  // Filter real data by cutoff
+  // Filter strictly real data by cutoff
   const filteredSessions = sessions.filter((s) => s.startTime >= cutoff);
   const filteredEvents = events.filter((e) => e.timestamp >= cutoff);
 
-  // Baseline realistic data to combine when includeDemo is true
-  const demoSessionsCount = period === 'today' ? 42 : period === '7d' ? 318 : period === '30d' ? 1420 : 2890;
-  const demoUniquesCount = Math.round(demoSessionsCount * 0.72);
-  const demoAvgTime = 245; // ~4m 5s
-  const demoExports = Math.round(demoSessionsCount * 0.48);
-
   const realVisits = filteredSessions.length;
   const realUniques = new Set(filteredSessions.map((s) => s.visitorId)).size;
-  const realTotalTime = filteredSessions.reduce((acc, s) => acc + (s.durationSeconds || 15), 0);
+  const realTotalTime = filteredSessions.reduce((acc, s) => acc + (s.durationSeconds || 0), 0);
   const realAvgTime = realVisits > 0 ? Math.round(realTotalTime / realVisits) : 0;
   const realExports = filteredEvents.filter((e) => e.action === 'document_exported').length;
 
-  const totalVisits = includeDemo ? demoSessionsCount + realVisits : realVisits || 1;
-  const uniqueVisitors = includeDemo ? demoUniquesCount + realUniques : realUniques || 1;
-  const avgDurationSeconds = includeDemo ? Math.round((demoAvgTime * demoSessionsCount + realTotalTime) / (demoSessionsCount + realVisits || 1)) : realAvgTime || 60;
-  const totalExports = includeDemo ? demoExports + realExports : realExports;
+  const totalVisits = realVisits;
+  const uniqueVisitors = realUniques;
+  const avgDurationSeconds = realAvgTime;
+  const totalExports = realExports;
 
   // Active visitors currently (within last 3 minutes)
-  const activeVisitorsNow = Math.max(1, filteredSessions.filter((s) => now - s.lastActive < 180000).length);
+  const activeVisitorsNow = filteredSessions.filter((s) => now - s.lastActive < 180000).length;
 
-  // Referrers aggregation
+  // Referrers aggregation strictly from real sessions
   const refMap: Record<string, { count: number; category: string }> = {};
-  if (includeDemo) {
-    refMap['Прямий перехід'] = { count: Math.round(totalVisits * 0.38), category: 'Прямий' };
-    refMap['Google Пошук'] = { count: Math.round(totalVisits * 0.31), category: 'Пошук' };
-    refMap['Telegram'] = { count: Math.round(totalVisits * 0.16), category: 'Месенджери' };
-    refMap['InfinityFree'] = { count: Math.round(totalVisits * 0.08), category: 'Хостинг' };
-    refMap['Facebook / Instagram'] = { count: Math.round(totalVisits * 0.07), category: 'Соцмережі' };
-  }
 
   filteredSessions.forEach((s) => {
     const key = s.referrer || 'Прямий перехід';
@@ -409,7 +455,7 @@ export function getAnalyticsSummary(
       name,
       category: data.category,
       count: data.count,
-      percentage: Math.round((data.count / totalRefCount) * 100),
+      percentage: totalVisits > 0 ? Math.round((data.count / totalRefCount) * 100) : 0,
     }))
     .sort((a, b) => b.count - a.count);
 
@@ -426,33 +472,19 @@ export function getAnalyticsSummary(
     const dayRealSessions = filteredSessions.filter((s) => s.startTime >= dayStart && s.startTime < dayEnd);
     const dayRealVisits = dayRealSessions.length;
     const dayRealUniques = new Set(dayRealSessions.map((s) => s.visitorId)).size;
-
-    const mockFactor = Math.sin(i * 0.8) * 12 + 45;
-    const dayVisits = includeDemo ? Math.round(mockFactor + dayRealVisits) : dayRealVisits;
-    const dayUniques = includeDemo ? Math.round(dayVisits * 0.74) : dayRealUniques;
-    const dayAvgDuration = includeDemo ? 210 + (i % 5) * 20 : 120;
+    const dayTotalTime = dayRealSessions.reduce((acc, s) => acc + (s.durationSeconds || 0), 0);
+    const dayAvgDuration = dayRealVisits > 0 ? Math.round(dayTotalTime / dayRealVisits) : 0;
 
     dailyVisits.push({
       date: dateStr,
-      visits: Math.max(1, dayVisits),
-      uniques: Math.max(1, dayUniques),
+      visits: dayRealVisits,
+      uniques: dayRealUniques,
       avgDuration: dayAvgDuration,
     });
   }
 
-  // Tools popularity ranking
+  // Tools popularity ranking strictly from real events
   const toolsMap: Record<string, number> = {};
-  if (includeDemo) {
-    toolsMap['text'] = Math.round(totalVisits * 1.8);
-    toolsMap['stamp'] = Math.round(totalVisits * 1.4);
-    toolsMap['signature'] = Math.round(totalVisits * 1.1);
-    toolsMap['shape'] = Math.round(totalVisits * 0.9);
-    toolsMap['highlighter'] = Math.round(totalVisits * 0.75);
-    toolsMap['whiteout'] = Math.round(totalVisits * 0.6);
-    toolsMap['draw'] = Math.round(totalVisits * 0.5);
-    toolsMap['merge'] = Math.round(totalVisits * 0.35);
-  }
-
   filteredEvents
     .filter((e) => e.category === 'tool')
     .forEach((e) => {
@@ -471,7 +503,7 @@ export function getAnalyticsSummary(
     export: { name: 'Експорт готового PDF', color: '#2563EB' },
   };
 
-  const totalToolActions = Object.values(toolsMap).reduce((a, b) => a + b, 0) || 1;
+  const totalToolActions = Object.values(toolsMap).reduce((a, b) => a + b, 0);
   const toolsRank = Object.entries(toolsMap)
     .map(([id, count]) => {
       const meta = toolMeta[id] || { name: id, color: '#64748B' };
@@ -479,89 +511,82 @@ export function getAnalyticsSummary(
         id,
         name: meta.name,
         count,
-        percentage: Math.round((count / totalToolActions) * 100),
+        percentage: totalToolActions > 0 ? Math.round((count / totalToolActions) * 100) : 0,
         color: meta.color,
       };
     })
     .sort((a, b) => b.count - a.count);
 
-  // Device breakdown
-  const deviceCounts = {
-    desktop: includeDemo ? Math.round(totalVisits * 0.58) : 0,
-    mobile: includeDemo ? Math.round(totalVisits * 0.34) : 0,
-    tablet: includeDemo ? Math.round(totalVisits * 0.08) : 0,
-  };
+  // Device breakdown strictly from real sessions
+  const deviceCounts = { desktop: 0, mobile: 0, tablet: 0 };
   filteredSessions.forEach((s) => {
-    deviceCounts[s.device] = (deviceCounts[s.device] || 0) + 1;
+    if (s.device in deviceCounts) {
+      deviceCounts[s.device]++;
+    }
   });
-  const devTotal = deviceCounts.desktop + deviceCounts.mobile + deviceCounts.tablet || 1;
+  const devTotal = filteredSessions.length;
   const deviceBreakdown = [
-    { type: 'Комп\'ютери (Desktop)', count: deviceCounts.desktop, percentage: Math.round((deviceCounts.desktop / devTotal) * 100) },
-    { type: 'Смартфони (Mobile)', count: deviceCounts.mobile, percentage: Math.round((deviceCounts.mobile / devTotal) * 100) },
-    { type: 'Планшети (Tablet)', count: deviceCounts.tablet, percentage: Math.round((deviceCounts.tablet / devTotal) * 100) },
+    { type: 'Комп\'ютери (Desktop)', count: deviceCounts.desktop, percentage: devTotal > 0 ? Math.round((deviceCounts.desktop / devTotal) * 100) : 0 },
+    { type: 'Смартфони (Mobile)', count: deviceCounts.mobile, percentage: devTotal > 0 ? Math.round((deviceCounts.mobile / devTotal) * 100) : 0 },
+    { type: 'Планшети (Tablet)', count: deviceCounts.tablet, percentage: devTotal > 0 ? Math.round((deviceCounts.tablet / devTotal) * 100) : 0 },
   ];
 
-  // OS breakdown
+  // OS breakdown strictly from real sessions
   const osMap: Record<string, number> = {};
-  if (includeDemo) {
-    osMap['Windows'] = Math.round(totalVisits * 0.44);
-    osMap['macOS'] = Math.round(totalVisits * 0.26);
-    osMap['Android'] = Math.round(totalVisits * 0.18);
-    osMap['iOS'] = Math.round(totalVisits * 0.10);
-    osMap['Linux'] = Math.round(totalVisits * 0.02);
-  }
   filteredSessions.forEach((s) => {
     osMap[s.os] = (osMap[s.os] || 0) + 1;
   });
-  const osTotal = Object.values(osMap).reduce((a, b) => a + b, 0) || 1;
+  const osTotal = filteredSessions.length;
   const osBreakdown = Object.entries(osMap)
     .map(([name, count]) => ({
       name,
       count,
-      percentage: Math.round((count / osTotal) * 100),
+      percentage: osTotal > 0 ? Math.round((count / osTotal) * 100) : 0,
     }))
     .sort((a, b) => b.count - a.count);
 
-  // Browser breakdown
+  // Browser breakdown strictly from real sessions
   const browserMap: Record<string, number> = {};
-  if (includeDemo) {
-    browserMap['Chrome'] = Math.round(totalVisits * 0.64);
-    browserMap['Safari'] = Math.round(totalVisits * 0.20);
-    browserMap['Firefox'] = Math.round(totalVisits * 0.08);
-    browserMap['Edge'] = Math.round(totalVisits * 0.06);
-    browserMap['Opera'] = Math.round(totalVisits * 0.02);
-  }
   filteredSessions.forEach((s) => {
     browserMap[s.browser] = (browserMap[s.browser] || 0) + 1;
   });
-  const browserTotal = Object.values(browserMap).reduce((a, b) => a + b, 0) || 1;
+  const browserTotal = filteredSessions.length;
   const browserBreakdown = Object.entries(browserMap)
     .map(([name, count]) => ({
       name,
       count,
-      percentage: Math.round((count / browserTotal) * 100),
+      percentage: browserTotal > 0 ? Math.round((count / browserTotal) * 100) : 0,
     }))
     .sort((a, b) => b.count - a.count);
 
-  // Duration distribution
+  // Duration distribution strictly from real sessions
+  const countLt30 = filteredSessions.filter((s) => (s.durationSeconds || 0) < 30).length;
+  const count30to180 = filteredSessions.filter((s) => (s.durationSeconds || 0) >= 30 && (s.durationSeconds || 0) < 180).length;
+  const count180to600 = filteredSessions.filter((s) => (s.durationSeconds || 0) >= 180 && (s.durationSeconds || 0) < 600).length;
+  const countGt600 = filteredSessions.filter((s) => (s.durationSeconds || 0) >= 600).length;
+
   const durationDistribution = [
-    { label: '< 30 сек (швидкий перегляд)', count: Math.round(totalVisits * 0.18), percentage: 18 },
-    { label: '1 - 3 хв (базове редагування)', count: Math.round(totalVisits * 0.32), percentage: 32 },
-    { label: '3 - 10 хв (повний цикл роботи)', count: Math.round(totalVisits * 0.38), percentage: 38 },
-    { label: '> 10 хв (глибока робота / об\'єднання)', count: Math.round(totalVisits * 0.12), percentage: 12 },
+    { label: '< 30 сек (швидкий перегляд)', count: countLt30, percentage: totalVisits > 0 ? Math.round((countLt30 / totalVisits) * 100) : 0 },
+    { label: '1 - 3 хв (базове редагування)', count: count30to180, percentage: totalVisits > 0 ? Math.round((count30to180 / totalVisits) * 100) : 0 },
+    { label: '3 - 10 хв (повний цикл роботи)', count: count180to600, percentage: totalVisits > 0 ? Math.round((count180to600 / totalVisits) * 100) : 0 },
+    { label: '> 10 хв (глибока робота / об\'єднання)', count: countGt600, percentage: totalVisits > 0 ? Math.round((countGt600 / totalVisits) * 100) : 0 },
   ];
 
-  // Actions counts
+  // Actions counts strictly from real events
   const actionsSummary = {
-    documentsLoaded: includeDemo ? Math.round(totalVisits * 0.85) : filteredEvents.filter((e) => e.action === 'document_loaded').length,
+    documentsLoaded: filteredEvents.filter((e) => e.action === 'document_loaded').length,
     documentsExported: totalExports,
-    documentsPrinted: includeDemo ? Math.round(totalVisits * 0.18) : filteredEvents.filter((e) => e.action === 'document_printed').length,
-    merges: includeDemo ? Math.round(totalVisits * 0.22) : filteredEvents.filter((e) => e.action === 'document_merged').length,
+    documentsPrinted: filteredEvents.filter((e) => e.action === 'document_printed').length,
+    merges: filteredEvents.filter((e) => e.action === 'document_merged').length,
     textEdits: toolsMap['text'] || 0,
     stampsAdded: toolsMap['stamp'] || 0,
     signaturesAdded: toolsMap['signature'] || 0,
     shapesDrawn: toolsMap['shape'] || 0,
   };
+
+  const bounceRate = totalVisits > 0
+    ? Math.round((filteredSessions.filter((s) => (s.durationSeconds || 0) < 15).length / totalVisits) * 100)
+    : 0;
 
   return {
     period,
@@ -570,7 +595,7 @@ export function getAnalyticsSummary(
     avgDurationSeconds,
     totalExports,
     activeVisitorsNow,
-    bounceRate: 18,
+    bounceRate,
     dailyVisits,
     referrers,
     toolsRank,
