@@ -25,8 +25,8 @@ import {
   createNewBlankPdf,
   mergePdfs,
 } from './services/pdfModifier';
-import { createSamplePdf } from './services/sampleDocument';
 import { useHistory } from './hooks/useHistory';
+import { FileUp, FilePlus } from 'lucide-react';
 
 import { Header } from './components/Header';
 import { Toolbar } from './components/Toolbar';
@@ -37,37 +37,46 @@ import { SignatureModal } from './components/SignatureModal';
 import { StampModal } from './components/StampModal';
 import { MergeModal } from './components/MergeModal';
 import { ShortcutsModal } from './components/ShortcutsModal';
+import { OnboardingTour } from './components/OnboardingTour';
+import { AdminPanel } from './components/AdminPanel';
+import {
+  initAnalytics,
+  trackToolUse,
+  trackDocumentLoad,
+  trackDocumentExport,
+  trackDocumentPrint,
+  trackMergePdf,
+  trackThemeChange,
+} from './services/analyticsTracker';
 
 export const App: React.FC = () => {
-  // Theme state: system, light, dark
-  const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
+  // Theme state: dark (default), light
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('propdf_theme');
+    return saved === 'light' || saved === 'dark' ? saved : 'dark';
+  });
 
   useEffect(() => {
     const root = document.documentElement;
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-
-    const applyTheme = () => {
-      if (theme === 'dark' || (theme === 'system' && media.matches)) {
-        root.classList.add('dark');
-      } else {
-        root.classList.remove('dark');
-      }
-    };
-
-    applyTheme();
-    media.addEventListener('change', applyTheme);
-    return () => media.removeEventListener('change', applyTheme);
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('propdf_theme', theme);
   }, [theme]);
 
   // Document Core State
   const [rawPdfBytes, setRawPdfBytes] = useState<Uint8Array | null>(null);
   const [pdfDocProxy, setPdfDocProxy] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
-  const [fileName, setFileName] = useState<string>('Комерційна_пропозиція.pdf');
+  const [fileName, setFileName] = useState<string>('Документ.pdf');
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState<number>(0);
   const [scale, setScale] = useState<number>(1.25);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(false);
+  const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
   // Tools & Edit Modes
   const [toolMode, setToolMode] = useState<ToolMode>('select');
@@ -151,12 +160,85 @@ export const App: React.FC = () => {
     ]
   );
 
-  // 1. Initial Load: create and load sample PDF
-  useEffect(() => {
-    createSamplePdf().then((bytes) => {
-      loadDocumentFromBytes(bytes, 'Комерційна_пропозиція.pdf');
-    });
+  // Check if URL matches secret admin entry (/#admin or ?admin=portal)
+  const isSecretAdminUrl = useCallback(() => {
+    if (typeof window === 'undefined') return false;
+    const isHash = window.location.hash.toLowerCase() === '#admin';
+    const params = new URLSearchParams(window.location.search);
+    const isParam = params.get('admin') === 'portal' || params.get('admin') === '1';
+    return isHash || isParam;
   }, []);
+
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState<boolean>(() => isSecretAdminUrl());
+
+  // Listen for hashchange and popstate to trigger admin panel on secret URL
+  useEffect(() => {
+    initAnalytics();
+
+    const handleUrlChange = () => {
+      if (isSecretAdminUrl()) {
+        setIsAdminPanelOpen(true);
+      }
+    };
+    window.addEventListener('hashchange', handleUrlChange);
+    window.addEventListener('popstate', handleUrlChange);
+    return () => {
+      window.removeEventListener('hashchange', handleUrlChange);
+      window.removeEventListener('popstate', handleUrlChange);
+    };
+  }, [isSecretAdminUrl]);
+
+  const handleCloseAdmin = () => {
+    setIsAdminPanelOpen(false);
+    // Erase #admin and ?admin=portal silently without reloading page
+    if (isSecretAdminUrl()) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  };
+
+  const handleThemeChange = (newTheme: 'light' | 'dark') => {
+    setTheme(newTheme);
+    trackThemeChange(newTheme);
+  };
+
+  // 1. Initial startup: open onboarding if not completed yet
+  useEffect(() => {
+    const hasCompleted = localStorage.getItem('propdf_onboarding_completed');
+    if (!hasCompleted) {
+      setIsOnboardingOpen(true);
+    }
+  }, []);
+
+  // Tool change: clear active item selections when switching away from 'select'
+  const handleSelectTool = (newTool: ToolMode) => {
+    setToolMode(newTool);
+    trackToolUse(newTool);
+    if (newTool !== 'select') {
+      setSelectedText(null);
+      setSelectedImage(null);
+      setSelectedShape(null);
+      setSelectedStamp(null);
+      setSelectedSignature(null);
+      setSelectedWhiteout(null);
+    }
+  };
+
+  // Drag and Drop PDF files onto the window
+  const handleDropFile = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if (ev.target?.result) {
+          const bytes = new Uint8Array(ev.target.result as ArrayBuffer);
+          loadDocumentFromBytes(bytes, file.name);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+  };
 
   const loadDocumentFromBytes = async (bytes: Uint8Array, name: string) => {
     try {
@@ -184,6 +266,7 @@ export const App: React.FC = () => {
       }
 
       setTextBlocks(allTextBlocks);
+      trackDocumentLoad(pagesInfo.length, name);
       setImages([]);
       setDrawings([]);
       setShapes([]);
@@ -233,7 +316,7 @@ export const App: React.FC = () => {
 
   // New Blank Document
   const handleNewFile = async () => {
-    if (confirm('Створити новий чистий PDF документ? Незбережені зміни буде втрачено.')) {
+    if (pages.length === 0 || confirm('Створити новий чистий PDF документ? Незбережені зміни буде втрачено.')) {
       const bytes = await createNewBlankPdf();
       loadDocumentFromBytes(bytes, 'Новий_документ.pdf');
     }
@@ -263,6 +346,7 @@ export const App: React.FC = () => {
       const currentSavedBytes = await saveModifiedPdf(rawPdfBytes, currentState);
       const mergedBytes = await mergePdfs(currentSavedBytes, otherPdfBytes);
       loadDocumentFromBytes(mergedBytes, fileName);
+      trackMergePdf();
     } catch (err) {
       console.error('Failed to merge PDFs:', err);
       alert('Не вдалося об\'єднати PDF документи: ' + (err as Error).message);
@@ -326,6 +410,7 @@ export const App: React.FC = () => {
 
       const modifiedBytes = await saveModifiedPdf(rawPdfBytes, currentState);
       downloadPdfBlob(modifiedBytes, fileName);
+      trackDocumentExport(pages.length, fileName);
     } catch (err) {
       console.error('Error exporting PDF:', err);
       alert('Помилка при експорті PDF: ' + (err as Error).message);
@@ -356,6 +441,7 @@ export const App: React.FC = () => {
       };
       const modifiedBytes = await saveModifiedPdf(rawPdfBytes, currentState);
       printPdfBlob(modifiedBytes);
+      trackDocumentPrint();
     } catch (err) {
       console.error('Print error:', err);
     }
@@ -905,15 +991,17 @@ export const App: React.FC = () => {
         onResetZoom={() => setScale(1.0)}
         onFitWidth={() => setScale(1.4)}
         theme={theme}
-        onThemeChange={setTheme}
+        onThemeChange={handleThemeChange}
         onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
+        onToggleOnboarding={() => setIsOnboardingOpen((prev) => !prev)}
+        isOnboardingActive={isOnboardingOpen}
         isSaving={isSaving}
       />
 
       {/* Primary Toolbar */}
       <Toolbar
         activeTool={toolMode}
-        onSelectTool={setToolMode}
+        onSelectTool={handleSelectTool}
         onAddImageClick={() => imageInputRef.current?.click()}
         onAddStampClick={() => setIsStampModalOpen(true)}
         onAddSignatureClick={() => setIsSignatureModalOpen(true)}
@@ -952,69 +1040,115 @@ export const App: React.FC = () => {
         onShapeTypeChange={setActiveShapeType}
       />
 
-      {/* Main Workspace: Sidebar + PDF Viewer */}
+      {/* Main Workspace: Sidebar + PDF Viewer / Dropzone */}
       <div className="flex-1 flex overflow-hidden relative">
         <PageSidebar
           isOpen={isSidebarOpen}
           onToggle={() => setIsSidebarOpen((prev) => !prev)}
+          pdfDoc={pdfDocProxy}
           pages={pages}
           pageOrder={pageOrder}
           deletedPages={deletedPages}
+          pageRotations={pageRotations}
           currentPageIndex={currentPageIndex}
           onSelectPage={setCurrentPageIndex}
           onRotatePage={handleRotatePage}
           onDuplicatePage={handleDuplicatePage}
           onDeletePage={handleDeletePage}
           onMovePage={handleMovePage}
-          onAddBlankPage={handleAddBlankPage}
+          onAddBlankPage={handleNewFile}
         />
 
-        <PdfViewer
-          pdfDoc={pdfDocProxy}
-          currentPageIndex={currentPageIndex}
-          onPageChange={setCurrentPageIndex}
-          pages={pages}
-          pageOrder={pageOrder}
-          deletedPages={deletedPages}
-          pageRotations={pageRotations}
-          scale={scale}
-          toolMode={toolMode}
-          textBlocks={textBlocks}
-          onUpdateTextBlock={handleUpdateTextBlock}
-          onBatchUpdateTextBlocks={handleBatchUpdateTextBlocks}
-          onAddTextBlock={handleAddTextBlock}
-          onSelectTextBlock={handleSelectTextBlock}
-          selectedTextId={selectedText?.id ?? null}
-          images={images}
-          onUpdateImage={handleUpdateImage}
-          onSelectImage={handleSelectImage}
-          selectedImageId={selectedImage?.id ?? null}
-          shapes={shapes}
-          onAddShape={handleAddShape}
-          onUpdateShape={handleUpdateShapeById}
-          onSelectShape={handleSelectShape}
-          selectedShapeId={selectedShape?.id ?? null}
-          drawings={drawings}
-          onAddDrawing={handleAddDrawing}
-          whiteouts={whiteouts}
-          onAddWhiteout={handleAddWhiteout}
-          onUpdateWhiteout={handleUpdateWhiteoutById}
-          onSelectWhiteout={handleSelectWhiteout}
-          selectedWhiteoutId={selectedWhiteout?.id ?? null}
-          stamps={stamps}
-          onUpdateStamp={handleUpdateStampById}
-          onSelectStamp={handleSelectStamp}
-          selectedStampId={selectedStamp?.id ?? null}
-          signatures={signatures}
-          onUpdateSignature={handleUpdateSignatureById}
-          onSelectSignature={handleSelectSignature}
-          selectedSignatureId={selectedSignature?.id ?? null}
-          penColor={penColor}
-          penWidth={penWidth}
-          highlighterColor={highlighterColor}
-          highlighterWidth={highlighterWidth}
-          activeShapeType={activeShapeType}
-        />
+        {pages.length > 0 ? (
+          <PdfViewer
+            pdfDoc={pdfDocProxy}
+            currentPageIndex={currentPageIndex}
+            onPageChange={setCurrentPageIndex}
+            pages={pages}
+            pageOrder={pageOrder}
+            deletedPages={deletedPages}
+            pageRotations={pageRotations}
+            scale={scale}
+            toolMode={toolMode}
+            textBlocks={textBlocks}
+            onUpdateTextBlock={handleUpdateTextBlock}
+            onBatchUpdateTextBlocks={handleBatchUpdateTextBlocks}
+            onAddTextBlock={handleAddTextBlock}
+            onSelectTextBlock={handleSelectTextBlock}
+            selectedTextId={selectedText?.id ?? null}
+            images={images}
+            onUpdateImage={handleUpdateImage}
+            onSelectImage={handleSelectImage}
+            selectedImageId={selectedImage?.id ?? null}
+            shapes={shapes}
+            onAddShape={handleAddShape}
+            onUpdateShape={handleUpdateShapeById}
+            onSelectShape={handleSelectShape}
+            selectedShapeId={selectedShape?.id ?? null}
+            drawings={drawings}
+            onAddDrawing={handleAddDrawing}
+            whiteouts={whiteouts}
+            onAddWhiteout={handleAddWhiteout}
+            onUpdateWhiteout={handleUpdateWhiteoutById}
+            onSelectWhiteout={handleSelectWhiteout}
+            selectedWhiteoutId={selectedWhiteout?.id ?? null}
+            stamps={stamps}
+            onUpdateStamp={handleUpdateStampById}
+            onSelectStamp={handleSelectStamp}
+            selectedStampId={selectedStamp?.id ?? null}
+            signatures={signatures}
+            onUpdateSignature={handleUpdateSignatureById}
+            onSelectSignature={handleSelectSignature}
+            selectedSignatureId={selectedSignature?.id ?? null}
+            penColor={penColor}
+            penWidth={penWidth}
+            highlighterColor={highlighterColor}
+            highlighterWidth={highlighterWidth}
+            activeShapeType={activeShapeType}
+          />
+        ) : (
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragOver(true);
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDropFile}
+            className={`flex-1 flex flex-col items-center justify-center p-8 transition-all ${
+              isDragOver
+                ? 'bg-blue-50/60 dark:bg-blue-950/40 border-2 border-dashed border-blue-500'
+                : 'bg-slate-100 dark:bg-slate-950'
+            }`}
+          >
+            <div className="max-w-md w-full p-8 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl flex flex-col items-center text-center">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-500 to-indigo-600 text-white flex items-center justify-center mb-5 shadow-lg shadow-blue-500/25">
+                <FileUp className="w-8 h-8" />
+              </div>
+              <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">
+                Відкрийте або створіть PDF
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+                Перетягніть PDF файл сюди або скористайтеся кнопками нижче для початку роботи.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3 w-full">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+                >
+                  <FileUp className="w-4 h-4" />
+                  <span>Відкрити PDF</span>
+                </button>
+                <button
+                  onClick={handleNewFile}
+                  className="flex-1 py-2.5 px-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
+                >
+                  <FilePlus className="w-4 h-4" />
+                  <span>Чистий аркуш A4</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modals */}
@@ -1039,6 +1173,16 @@ export const App: React.FC = () => {
       <ShortcutsModal
         isOpen={isShortcutsModalOpen}
         onClose={() => setIsShortcutsModalOpen(false)}
+      />
+
+      <OnboardingTour
+        isOpen={isOnboardingOpen}
+        onClose={() => setIsOnboardingOpen(false)}
+      />
+
+      <AdminPanel
+        isOpen={isAdminPanelOpen}
+        onClose={handleCloseAdmin}
       />
     </div>
   );

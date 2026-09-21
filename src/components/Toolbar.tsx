@@ -106,6 +106,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         return (
           <button
             key={t.id}
+            id={`tool-${t.id}`}
             onClick={() => {
               if (t.action) {
                 t.action();

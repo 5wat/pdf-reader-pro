@@ -182,7 +182,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   return (
     <div
       ref={containerRef}
-      className="flex-1 overflow-auto bg-slate-200/70 dark:bg-slate-950 flex flex-col items-center py-6 px-4 relative select-none transition-colors"
+      className="flex-1 overflow-auto bg-slate-200/70 dark:bg-slate-950 flex flex-col items-center pt-6 pb-[65vh] px-4 relative select-none transition-colors"
     >
       {/* PDF Page Container */}
       <div
@@ -243,8 +243,11 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         />
       </div>
 
+      {/* Bottom Overscroll Spacer: allows user to scroll bottom of page into center of screen */}
+      <div className="h-[55vh] shrink-0 pointer-events-none w-full" aria-hidden="true" />
+
       {/* Floating Bottom Page Navigator */}
-      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-full shadow-lg border border-slate-200 dark:border-slate-800 flex items-center space-x-3 text-xs font-semibold text-slate-700 dark:text-slate-200 z-30 transition-all">
+      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-full shadow-lg border border-slate-200 dark:border-slate-800 flex items-center space-x-3 text-xs font-semibold text-slate-700 dark:text-slate-200 z-30 transition-all opacity-85 hover:opacity-100 shadow-slate-900/10 dark:shadow-black/40">
         <button
           onClick={() => {
             if (currentDisplayPosition > 0) {

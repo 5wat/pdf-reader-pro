@@ -13,7 +13,8 @@ import {
   HelpCircle,
   Sun,
   Moon,
-  Laptop,
+  FileText,
+  Sparkles,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -33,9 +34,11 @@ interface HeaderProps {
   onZoomOut: () => void;
   onResetZoom: () => void;
   onFitWidth: () => void;
-  theme: 'system' | 'light' | 'dark';
-  onThemeChange: (theme: 'system' | 'light' | 'dark') => void;
+  theme: 'light' | 'dark';
+  onThemeChange: (theme: 'light' | 'dark') => void;
   onOpenShortcuts: () => void;
+  onToggleOnboarding?: () => void;
+  isOnboardingActive?: boolean;
   isSaving: boolean;
 }
 
@@ -59,22 +62,24 @@ export const Header: React.FC<HeaderProps> = ({
   theme,
   onThemeChange,
   onOpenShortcuts,
+  onToggleOnboarding,
+  isOnboardingActive,
   isSaving,
 }) => {
   return (
     <header className="h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between z-30 select-none shadow-sm transition-colors">
       {/* Left: Brand & File Name */}
       <div className="flex items-center space-x-3">
-        <div className="flex items-center space-x-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow-md">
-            PDF
+        <div className="flex items-center space-x-2.5">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 ring-1 ring-white/20">
+            <FileText className="w-4 h-4 text-white" />
           </div>
-          <div className="flex items-center space-x-1">
-            <span className="font-bold tracking-tight text-slate-900 dark:text-white text-base">
-              PDF PRO
+          <div className="flex items-baseline space-x-1">
+            <span className="font-extrabold tracking-tight text-slate-900 dark:text-white text-base">
+              ProPDF
             </span>
-            <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400">
-              PRO
+            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 lowercase tracking-wider bg-blue-50 dark:bg-blue-900/40 px-1.5 py-0.5 rounded">
+              free
             </span>
           </div>
         </div>
@@ -186,24 +191,34 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right: Theme, Help, Print, Save/Export */}
       <div className="flex items-center space-x-2">
-        {/* Theme switcher */}
+        {/* Theme switcher: Dark <-> Light */}
         <button
-          onClick={() => {
-            if (theme === 'system') onThemeChange('dark');
-            else if (theme === 'dark') onThemeChange('light');
-            else onThemeChange('system');
-          }}
+          onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
           className="p-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
-          title={`Тема: ${theme === 'system' ? 'Системна' : theme === 'dark' ? 'Темна' : 'Світла'}`}
+          title={theme === 'dark' ? 'Перемкнути на світлу тему' : 'Перемкнути на темну тему'}
         >
-          {theme === 'system' ? (
-            <Laptop className="w-4 h-4 text-blue-500" />
-          ) : theme === 'dark' ? (
+          {theme === 'dark' ? (
             <Moon className="w-4 h-4 text-indigo-400" />
           ) : (
             <Sun className="w-4 h-4 text-amber-500" />
           )}
         </button>
+
+        {/* Onboarding toggle */}
+        {onToggleOnboarding && (
+          <button
+            id="onboarding-toggle-btn"
+            onClick={onToggleOnboarding}
+            className={`p-1.5 rounded-lg transition-colors border ${
+              isOnboardingActive
+                ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-700'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border-transparent hover:border-slate-200 dark:hover:border-slate-700'
+            }`}
+            title={isOnboardingActive ? 'Закрити інструкцію (Онбординг)' : 'Відкрити тур по можливостях (Онбординг)'}
+          >
+            <Sparkles className="w-4 h-4 text-amber-500" />
+          </button>
+        )}
 
         {/* Shortcuts */}
         <button

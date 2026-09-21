@@ -91,6 +91,95 @@ async function convertDataUrlToPngBytes(dataUrl: string): Promise<Uint8Array> {
   });
 }
 
+async function renderStampToPngBytes(stamp: StampElement): Promise<Uint8Array> {
+  const dpr = 4; // High DPI for crisp vector-like quality in PDF (300+ DPI equivalent)
+  const width = Math.round(stamp.width * dpr);
+  const height = Math.round(stamp.height * dpr);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context not available');
+
+  ctx.scale(dpr, dpr);
+
+  const w = stamp.width;
+  const h = stamp.height;
+  const color = stamp.color || '#16A34A';
+
+  // 1. Outer rounded container background & border
+  const outerRadius = 8;
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(1, 1, w - 2, h - 2, outerRadius);
+  } else {
+    ctx.rect(1, 1, w - 2, h - 2);
+  }
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+
+  // 2. Inner dashed border
+  const innerInset = 4.5;
+  const innerRadius = 5;
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(innerInset, innerInset, w - innerInset * 2, h - innerInset * 2, innerRadius);
+  } else {
+    ctx.rect(innerInset, innerInset, w - innerInset * 2, h - innerInset * 2);
+  }
+  ctx.setLineDash([4, 3]);
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.setLineDash([]); // reset
+
+  // 3. Text layout
+  ctx.textAlign = 'center';
+  ctx.fillStyle = color;
+
+  const hasSubtitle = Boolean(stamp.subtitle);
+  const hasDate = Boolean(stamp.date);
+
+  const titleSize = Math.max(12, h * (hasSubtitle && hasDate ? 0.28 : hasSubtitle || hasDate ? 0.34 : 0.42));
+  const subSize = Math.max(8, h * 0.16);
+  const dateSize = Math.max(8, h * 0.14);
+
+  let totalTextHeight = titleSize;
+  if (hasSubtitle) totalTextHeight += subSize + 4;
+  if (hasDate) totalTextHeight += dateSize + 4;
+
+  let currentY = (h - totalTextHeight) / 2 + titleSize * 0.82;
+
+  // Title
+  ctx.font = `900 ${titleSize}px "Inter", "Segoe UI", -apple-system, Roboto, sans-serif`;
+  ctx.fillText(stamp.text.toUpperCase(), w / 2, currentY);
+
+  // Subtitle
+  if (hasSubtitle) {
+    currentY += subSize + 4;
+    ctx.font = `700 ${subSize}px "Inter", "Segoe UI", -apple-system, Roboto, sans-serif`;
+    ctx.globalAlpha = 0.9;
+    ctx.fillText(stamp.subtitle!, w / 2, currentY);
+    ctx.globalAlpha = 1.0;
+  }
+
+  // Date
+  if (hasDate) {
+    currentY += dateSize + 4;
+    ctx.font = `600 ${dateSize}px monospace, "Courier New", sans-serif`;
+    ctx.globalAlpha = 0.85;
+    ctx.fillText(stamp.date!, w / 2, currentY);
+    ctx.globalAlpha = 1.0;
+  }
+
+  const dataUrl = canvas.toDataURL('image/png');
+  return convertDataUrlToPngBytes(dataUrl);
+}
+
 export async function createNewBlankPdf(): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   pdfDoc.addPage(PageSizes.A4);
@@ -354,21 +443,27 @@ export async function saveModifiedPdf(
             opacity: shape.opacity ?? 1,
           });
         } else if (shape.type === 'line' || shape.type === 'arrow') {
+          const hasPoints =
+            shape.x1 !== undefined &&
+            shape.y1 !== undefined &&
+            shape.x2 !== undefined &&
+            shape.y2 !== undefined;
+          const startX = hasPoints ? shape.x1! : shape.x;
+          const startY = pageHeight - (hasPoints ? shape.y1! : shape.y);
+          const endX = hasPoints ? shape.x2! : shape.x + shape.width;
+          const endY = pageHeight - (hasPoints ? shape.y2! : shape.y + shape.height);
+
           page.drawLine({
-            start: { x: shape.x, y: pageHeight - shape.y },
-            end: { x: shape.x + shape.width, y: pageHeight - (shape.y + shape.height) },
+            start: { x: startX, y: startY },
+            end: { x: endX, y: endY },
             thickness: shape.strokeWidth,
             color: rgb(stroke.r, stroke.g, stroke.b),
             opacity: shape.opacity ?? 1,
           });
 
           if (shape.type === 'arrow') {
-            const startX = shape.x;
-            const startY = pageHeight - shape.y;
-            const endX = shape.x + shape.width;
-            const endY = pageHeight - (shape.y + shape.height);
             const angle = Math.atan2(endY - startY, endX - startX);
-            const headLength = Math.max(10, shape.strokeWidth * 3);
+            const headLength = Math.max(10, shape.strokeWidth * 3.5);
 
             page.drawLine({
               start: { x: endX, y: endY },
@@ -378,6 +473,7 @@ export async function saveModifiedPdf(
               },
               thickness: shape.strokeWidth,
               color: rgb(stroke.r, stroke.g, stroke.b),
+              opacity: shape.opacity ?? 1,
             });
             page.drawLine({
               start: { x: endX, y: endY },
@@ -387,6 +483,7 @@ export async function saveModifiedPdf(
               },
               thickness: shape.strokeWidth,
               color: rgb(stroke.r, stroke.g, stroke.b),
+              opacity: shape.opacity ?? 1,
             });
           }
         }
@@ -427,59 +524,29 @@ export async function saveModifiedPdf(
         }
       } else if (action.type === 'stamp') {
         const stamp = action.stamp;
-        const pdfY = pageHeight - stamp.y - stamp.height;
-        const stampColor = parseColor(stamp.color || '#E02424');
-
-        page.drawRectangle({
-          x: stamp.x,
-          y: pdfY,
-          width: stamp.width,
-          height: stamp.height,
-          borderColor: rgb(stampColor.r, stampColor.g, stampColor.b),
-          borderWidth: 3,
-          opacity: 0.9,
-        });
-
-        page.drawRectangle({
-          x: stamp.x + 3,
-          y: pdfY + 3,
-          width: stamp.width - 6,
-          height: stamp.height - 6,
-          borderColor: rgb(stampColor.r, stampColor.g, stampColor.b),
-          borderWidth: 1,
-          opacity: 0.9,
-        });
-
-        const stampFontSize = Math.max(12, Math.round(stamp.height * 0.35));
-        const font = targetFonts.boldUnicode;
-        let textWidth = 0;
         try {
-          textWidth = font.widthOfTextAtSize(stamp.text, stampFontSize);
-        } catch {
-          textWidth = stamp.text.length * (stampFontSize * 0.6);
-        }
+          const stampBytes = await renderStampToPngBytes(stamp);
+          const embeddedStamp = await newDoc.embedPng(stampBytes);
 
-        const textX = stamp.x + Math.max(4, (stamp.width - textWidth) / 2);
-        const textY = pdfY + (stamp.height / 2) - (stampFontSize * 0.35);
+          const rotDeg = stamp.rotation ?? -4;
+          const pdfAngleDeg = -rotDeg;
+          const angleRad = pdfAngleDeg * (Math.PI / 180);
 
-        page.drawText(stamp.text, {
-          x: textX,
-          y: textY,
-          size: stampFontSize,
-          font: font,
-          color: rgb(stampColor.r, stampColor.g, stampColor.b),
-        });
+          const cx = stamp.x + stamp.width / 2;
+          const cy = pageHeight - stamp.y - stamp.height / 2;
 
-        if (stamp.date) {
-          const dateFontSize = Math.max(8, Math.round(stampFontSize * 0.5));
-          const dateY = textY - dateFontSize - 4;
-          page.drawText(stamp.date, {
-            x: stamp.x + Math.max(4, (stamp.width - stamp.date.length * dateFontSize * 0.5) / 2),
-            y: dateY,
-            size: dateFontSize,
-            font: targetFonts.regularUnicode,
-            color: rgb(stampColor.r, stampColor.g, stampColor.b),
+          const drawX = cx - ((stamp.width / 2) * Math.cos(angleRad) - (stamp.height / 2) * Math.sin(angleRad));
+          const drawY = cy - ((stamp.width / 2) * Math.sin(angleRad) + (stamp.height / 2) * Math.cos(angleRad));
+
+          page.drawImage(embeddedStamp, {
+            x: drawX,
+            y: drawY,
+            width: stamp.width,
+            height: stamp.height,
+            rotate: degrees(pdfAngleDeg),
           });
+        } catch (err) {
+          console.error('Failed to embed rendered stamp in PDF:', err);
         }
       } else if (action.type === 'signature') {
         const sig = action.signature;

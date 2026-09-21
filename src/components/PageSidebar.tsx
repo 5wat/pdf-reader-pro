@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useRef, useEffect, useState } from 'react';
+import * as pdfjsLib from 'pdfjs-dist';
 import {
   RotateCw,
   Copy,
@@ -14,9 +15,11 @@ import { PageInfo } from '../types/pdf';
 interface PageSidebarProps {
   isOpen: boolean;
   onToggle: () => void;
+  pdfDoc: pdfjsLib.PDFDocumentProxy | null;
   pages: PageInfo[];
   pageOrder: number[];
   deletedPages: number[];
+  pageRotations?: Record<number, number>;
   currentPageIndex: number;
   onSelectPage: (index: number) => void;
   onRotatePage: (index: number) => void;
@@ -26,12 +29,107 @@ interface PageSidebarProps {
   onAddBlankPage: () => void;
 }
 
+const PageThumbnail: React.FC<{
+  pdfDoc: pdfjsLib.PDFDocumentProxy | null;
+  pageIndex: number;
+  rotation: number;
+}> = ({ pdfDoc, pageIndex, rotation }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isCancelled = false;
+    let renderTask: any = null;
+
+    const renderThumb = async () => {
+      if (!pdfDoc || pageIndex >= pdfDoc.numPages) {
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        setIsLoading(true);
+        const page = await pdfDoc.getPage(pageIndex + 1);
+        if (isCancelled) return;
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const totalRotation = ((page.rotate || 0) + rotation) % 360;
+        const unscaledViewport = page.getViewport({ scale: 1, rotation: totalRotation });
+        const scale = 180 / unscaledViewport.width;
+        const viewport = page.getViewport({ scale, rotation: totalRotation });
+
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+
+        const ctx = canvas.getContext('2d', { alpha: false });
+        if (!ctx) return;
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const renderContext: any = {
+          canvasContext: ctx,
+          viewport,
+        };
+        if (dpr !== 1) {
+          renderContext.transform = [dpr, 0, 0, dpr, 0, 0];
+        }
+
+        renderTask = page.render(renderContext);
+        await renderTask.promise;
+
+        if (!isCancelled) {
+          setIsLoading(false);
+        }
+      } catch (err: any) {
+        if (err?.name !== 'RenderingCancelledException' && !isCancelled) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    renderThumb();
+
+    return () => {
+      isCancelled = true;
+      if (renderTask) {
+        try {
+          renderTask.cancel();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [pdfDoc, pageIndex, rotation]);
+
+  return (
+    <div className="w-full aspect-[1/1.414] bg-white dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 flex items-center justify-center relative overflow-hidden shadow-inner">
+      <canvas ref={canvasRef} className="w-full h-full object-contain" />
+      {isLoading && (
+        <div className="absolute inset-0 bg-slate-100/80 dark:bg-slate-900/80 flex items-center justify-center">
+          <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+      {!pdfDoc && !isLoading && (
+        <div className="w-full h-full bg-white dark:bg-slate-900 flex items-center justify-center text-[10px] text-slate-400">
+          Чистий аркуш
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const PageSidebar: React.FC<PageSidebarProps> = ({
   isOpen,
   onToggle,
+  pdfDoc,
   pages,
   pageOrder,
   deletedPages,
+  pageRotations = {},
   currentPageIndex,
   onSelectPage,
   onRotatePage,
@@ -167,20 +265,15 @@ export const PageSidebar: React.FC<PageSidebarProps> = ({
                 </div>
               </div>
 
-              {/* Page Miniature Thumbnail Placeholder */}
-              <div className="w-full aspect-[1/1.414] bg-slate-100 dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center p-2 relative overflow-hidden shadow-inner">
-                <div className="w-full h-full flex flex-col justify-between p-2 opacity-60">
-                  <div className="w-3/4 h-2 bg-slate-300 dark:bg-slate-700 rounded mb-1" />
-                  <div className="space-y-1 my-auto">
-                    <div className="w-full h-1 bg-slate-300 dark:bg-slate-700 rounded" />
-                    <div className="w-5/6 h-1 bg-slate-300 dark:bg-slate-700 rounded" />
-                    <div className="w-4/6 h-1 bg-slate-300 dark:bg-slate-700 rounded" />
-                  </div>
-                  <div className="w-1/2 h-1.5 bg-slate-300 dark:bg-slate-700 rounded self-end" />
-                </div>
-
+              {/* Page Miniature Real Render */}
+              <div className="relative">
+                <PageThumbnail
+                  pdfDoc={pdfDoc}
+                  pageIndex={pageIdx}
+                  rotation={pageRotations[pageIdx] || 0}
+                />
                 {pageInfo && (
-                  <span className="absolute bottom-1 right-2 text-[9px] text-slate-400 font-mono">
+                  <span className="absolute bottom-1 right-2 text-[9px] text-slate-500 dark:text-slate-400 bg-white/80 dark:bg-slate-900/80 px-1 py-0.5 rounded font-mono shadow-xs">
                     {Math.round(pageInfo.width)}×{Math.round(pageInfo.height)} pt
                   </span>
                 )}

@@ -9,6 +9,7 @@ import {
   AlignRight,
   Trash2,
   RotateCw,
+  RotateCcw,
   FlipHorizontal,
   FlipVertical,
   Plus,
@@ -121,6 +122,92 @@ export const PropertiesBar: React.FC<PropertiesBarProps> = ({
   activeShapeType,
   onShapeTypeChange,
 }) => {
+  // 0a. Highlighter Mode (priority over selections when tool is active)
+  if (activeTool === 'highlighter') {
+    return (
+      <div className="h-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center space-x-3 text-xs z-10 transition-colors">
+        <span className="font-semibold text-slate-500 dark:text-slate-400 text-[11px] uppercase tracking-wider mr-1">
+          Маркер (Хайлайтер):
+        </span>
+        <div className="flex items-center space-x-1.5">
+          {HIGHLIGHTER_PRESETS.map((c) => (
+            <button
+              key={c}
+              onClick={() => onHighlighterColorChange(c)}
+              className={`w-6 h-6 rounded-md border transition-transform shadow-sm ${
+                highlighterColor === c ? 'scale-110 ring-2 ring-blue-500' : 'opacity-80 hover:opacity-100'
+              }`}
+              style={{ backgroundColor: c, borderColor: '#E2E8F0' }}
+            />
+          ))}
+        </div>
+
+        <div className="flex items-center space-x-1 ml-4">
+          <span className="text-slate-500 dark:text-slate-400">Ширина:</span>
+          {[8, 14, 20, 28].map((w) => (
+            <button
+              key={w}
+              onClick={() => onHighlighterWidthChange(w)}
+              className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                highlighterWidth === w
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              {w}px
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // 0b. Pen Mode
+  if (activeTool === 'pen') {
+    return (
+      <div className="h-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center space-x-3 text-xs z-10 transition-colors">
+        <span className="font-semibold text-slate-500 dark:text-slate-400 text-[11px] uppercase tracking-wider mr-1">
+          Олівець:
+        </span>
+        <div className="flex items-center space-x-1">
+          {COLOR_PRESETS.map((c) => (
+            <button
+              key={c}
+              onClick={() => onPenColorChange(c)}
+              className={`w-5 h-5 rounded-full border transition-transform ${
+                penColor === c ? 'scale-110 ring-2 ring-blue-500' : ''
+              }`}
+              style={{ backgroundColor: c, borderColor: '#CBD5E1' }}
+            />
+          ))}
+          <input
+            type="color"
+            value={penColor}
+            onChange={(e) => onPenColorChange(e.target.value)}
+            className="w-5 h-5 rounded cursor-pointer ml-1"
+          />
+        </div>
+
+        <div className="flex items-center space-x-1 ml-4">
+          <span className="text-slate-500 dark:text-slate-400">Товщина:</span>
+          {[1, 2, 4, 8].map((w) => (
+            <button
+              key={w}
+              onClick={() => onPenWidthChange(w)}
+              className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                penWidth === w
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              {w}px
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // 1. Text Properties (when text block is selected)
   if (selectedText) {
     return (
@@ -487,40 +574,98 @@ export const PropertiesBar: React.FC<PropertiesBarProps> = ({
   }
 
   // 3. Shape Properties (when a shape is selected)
-  if (selectedShape) {
+  if (selectedShape && (activeTool === 'select' || activeTool === 'shape')) {
+    const isLineOrArrow = selectedShape.type === 'line' || selectedShape.type === 'arrow';
+
     return (
       <div className="h-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center space-x-3 text-xs overflow-x-auto z-10 transition-colors">
         <span className="font-semibold text-slate-500 dark:text-slate-400 text-[11px] uppercase tracking-wider mr-1">
-          Фігура:
+          {selectedShape.type === 'arrow'
+            ? 'Стрілка:'
+            : selectedShape.type === 'line'
+            ? 'Лінія:'
+            : selectedShape.type === 'circle'
+            ? 'Коло:'
+            : 'Прямокутник:'}
         </span>
 
         {/* Stroke Color */}
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1.5">
           <span className="text-slate-500 dark:text-slate-400">Контур:</span>
           <input
             type="color"
             value={selectedShape.strokeColor}
             onChange={(e) => onUpdateShape({ strokeColor: e.target.value })}
-            className="w-5 h-5 rounded cursor-pointer border border-slate-300"
+            className="w-5 h-5 rounded cursor-pointer border border-slate-300 dark:border-slate-600"
+            title="Кастомний колір контуру"
           />
+          <div className="flex items-center space-x-1">
+            {['#000000', '#2563EB', '#059669', '#D97706', '#DC2626', '#FFFFFF'].map((c) => (
+              <button
+                key={c}
+                onClick={() => onUpdateShape({ strokeColor: c })}
+                className="w-3.5 h-3.5 rounded-full border border-slate-300 dark:border-slate-600 transition-transform hover:scale-110"
+                style={{ backgroundColor: c }}
+                title={c}
+              />
+            ))}
+          </div>
         </div>
 
-        {/* Fill Color */}
-        <div className="flex items-center space-x-1">
-          <span className="text-slate-500 dark:text-slate-400">Заливка:</span>
-          <select
-            value={selectedShape.fillColor}
-            onChange={(e) => onUpdateShape({ fillColor: e.target.value })}
-            className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 outline-none text-xs"
-          >
-            <option value="transparent">Без заливки (Прозора)</option>
-            <option value="#FFFFFF">Біла (#FFFFFF)</option>
-            <option value="#FEF08A">Жовта (#FEF08A)</option>
-            <option value="#BAE6FD">Блакитна (#BAE6FD)</option>
-            <option value="#BBF7D0">Зелена (#BBF7D0)</option>
-            <option value="#FEE2E2">Червона (#FEE2E2)</option>
-          </select>
-        </div>
+        {/* Fill Color (for rectangle / circle) */}
+        {!isLineOrArrow && (
+          <div className="flex items-center space-x-1.5 pl-2 border-l border-slate-200 dark:border-slate-700">
+            <span className="text-slate-500 dark:text-slate-400">Заливка:</span>
+            <button
+              onClick={() =>
+                onUpdateShape({
+                  fillColor: selectedShape.fillColor === 'transparent' ? '#3B82F6' : 'transparent',
+                })
+              }
+              className={`px-2 py-0.5 rounded border text-[11px] font-medium transition-colors ${
+                selectedShape.fillColor === 'transparent'
+                  ? 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                  : 'bg-blue-50 dark:bg-blue-900/40 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400'
+              }`}
+              title={
+                selectedShape.fillColor === 'transparent'
+                  ? 'Увімкнути заливку кольором'
+                  : 'Зробити прозорою'
+              }
+            >
+              {selectedShape.fillColor === 'transparent' ? 'Прозора' : 'Колір'}
+            </button>
+
+            {selectedShape.fillColor !== 'transparent' && (
+              <div className="flex items-center space-x-1">
+                <input
+                  type="color"
+                  value={
+                    selectedShape.fillColor.startsWith('#')
+                      ? selectedShape.fillColor
+                      : '#3B82F6'
+                  }
+                  onChange={(e) => onUpdateShape({ fillColor: e.target.value })}
+                  className="w-5 h-5 rounded cursor-pointer border border-slate-300 dark:border-slate-600"
+                  title="Кастомний колір заливки"
+                />
+                <div className="flex items-center space-x-1">
+                  {['#FFFFFF', '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'].map(
+                    (color) => (
+                      <button
+                        key={color}
+                        onClick={() => onUpdateShape({ fillColor: color })}
+                        className="w-3.5 h-3.5 rounded-full border border-slate-300 dark:border-slate-600 transition-transform hover:scale-110"
+                        style={{ backgroundColor: color }}
+                        title={color}
+                      />
+                    )
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Stroke Width */}
         <div className="flex items-center space-x-1">
@@ -611,14 +756,70 @@ export const PropertiesBar: React.FC<PropertiesBarProps> = ({
             className="w-5 h-5 rounded cursor-pointer border border-slate-300"
           />
         </div>
-        <button
-          onClick={() => onUpdateStamp?.({ rotation: ((selectedStamp.rotation || 0) + 15) % 360 })}
-          className="flex items-center space-x-1 px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded hover:bg-slate-200 transition-colors"
-          title="Повернути штамп"
-        >
-          <RotateCw className="w-3.5 h-3.5" />
-          <span>Поворот</span>
-        </button>
+        {/* Rotation Controls */}
+        <div className="flex items-center space-x-1.5 pl-1.5 border-l border-slate-200 dark:border-slate-700">
+          <span className="text-slate-500 dark:text-slate-400">Кут:</span>
+          <input
+            type="range"
+            min="-180"
+            max="180"
+            value={selectedStamp.rotation ?? -4}
+            onChange={(e) => onUpdateStamp?.({ rotation: parseInt(e.target.value, 10) })}
+            className="w-16 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            title="Повзунок кута нахилу штампа"
+          />
+          <span className="font-mono text-[11px] text-slate-700 dark:text-slate-300 w-8 text-right font-medium">
+            {(selectedStamp.rotation ?? -4) > 0 ? `+${selectedStamp.rotation ?? -4}°` : `${selectedStamp.rotation ?? -4}°`}
+          </span>
+
+          {/* Quick presets */}
+          <button
+            onClick={() => onUpdateStamp?.({ rotation: 0 })}
+            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+              (selectedStamp.rotation ?? -4) === 0
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+            title="Рівно (0°)"
+          >
+            0°
+          </button>
+          <button
+            onClick={() => onUpdateStamp?.({ rotation: -4 })}
+            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+              (selectedStamp.rotation ?? -4) === -4
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+            title="Природний нахил штампа (-4°)"
+          >
+            -4°
+          </button>
+          <button
+            onClick={() => {
+              const cur = selectedStamp.rotation ?? -4;
+              let next = cur - 15;
+              if (next < -180) next += 360;
+              onUpdateStamp?.({ rotation: next });
+            }}
+            className="p-1 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors"
+            title="Повернути проти годинникової стрілки (-15°)"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => {
+              const cur = selectedStamp.rotation ?? -4;
+              let next = cur + 15;
+              if (next > 180) next -= 360;
+              onUpdateStamp?.({ rotation: next });
+            }}
+            className="p-1 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors"
+            title="Повернути за годинниковою стрілкою (+15°)"
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
 
         {/* Layer order */}
         <div className="flex items-center space-x-0.5 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 p-0.5">
@@ -758,92 +959,6 @@ export const PropertiesBar: React.FC<PropertiesBarProps> = ({
         >
           <Trash2 className="w-4 h-4" />
         </button>
-      </div>
-    );
-  }
-
-  // 4. Pen Mode Bar
-  if (activeTool === 'pen') {
-    return (
-      <div className="h-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center space-x-3 text-xs z-10 transition-colors">
-        <span className="font-semibold text-slate-500 dark:text-slate-400 text-[11px] uppercase tracking-wider mr-1">
-          Олівець:
-        </span>
-        <div className="flex items-center space-x-1">
-          {COLOR_PRESETS.map((c) => (
-            <button
-              key={c}
-              onClick={() => onPenColorChange(c)}
-              className={`w-5 h-5 rounded-full border transition-transform ${
-                penColor === c ? 'scale-125 ring-2 ring-blue-500 ring-offset-1' : 'opacity-80 hover:opacity-100'
-              }`}
-              style={{ backgroundColor: c, borderColor: '#CBD5E1' }}
-            />
-          ))}
-          <input
-            type="color"
-            value={penColor}
-            onChange={(e) => onPenColorChange(e.target.value)}
-            className="w-5 h-5 rounded cursor-pointer ml-1"
-          />
-        </div>
-
-        <div className="flex items-center space-x-1 ml-4">
-          <span className="text-slate-500 dark:text-slate-400">Товщина:</span>
-          {[1, 2, 4, 8].map((w) => (
-            <button
-              key={w}
-              onClick={() => onPenWidthChange(w)}
-              className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                penWidth === w
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
-            >
-              {w}px
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // 5. Highlighter Mode Bar
-  if (activeTool === 'highlighter') {
-    return (
-      <div className="h-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center space-x-3 text-xs z-10 transition-colors">
-        <span className="font-semibold text-slate-500 dark:text-slate-400 text-[11px] uppercase tracking-wider mr-1">
-          Маркер (Хайлайтер):
-        </span>
-        <div className="flex items-center space-x-1.5">
-          {HIGHLIGHTER_PRESETS.map((c) => (
-            <button
-              key={c}
-              onClick={() => onHighlighterColorChange(c)}
-              className={`w-6 h-6 rounded-md border transition-transform shadow-sm ${
-                highlighterColor === c ? 'scale-110 ring-2 ring-blue-500' : 'opacity-80 hover:opacity-100'
-              }`}
-              style={{ backgroundColor: c, borderColor: '#E2E8F0' }}
-            />
-          ))}
-        </div>
-
-        <div className="flex items-center space-x-1 ml-4">
-          <span className="text-slate-500 dark:text-slate-400">Ширина:</span>
-          {[8, 14, 20, 28].map((w) => (
-            <button
-              key={w}
-              onClick={() => onHighlighterWidthChange(w)}
-              className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                highlighterWidth === w
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              {w}px
-            </button>
-          ))}
-        </div>
       </div>
     );
   }

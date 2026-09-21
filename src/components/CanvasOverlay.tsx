@@ -116,6 +116,7 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
   const startPoint = useRef<{ x: number; y: number } | null>(null);
   const [currentDrawingPoints, setCurrentDrawingPoints] = useState<Point[]>([]);
   const [liveShapeRect, setLiveShapeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [liveLine, setLiveLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
   // Transform / Move state for images, text, shapes, stamps, signatures, whiteouts
   const [dragItem, setDragItem] = useState<{
@@ -125,6 +126,10 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
     startY: number;
     origX: number;
     origY: number;
+    origX1?: number;
+    origY1?: number;
+    origX2?: number;
+    origY2?: number;
   } | null>(null);
 
   // Resize state for images, shapes, and text
@@ -138,6 +143,19 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
     origY: number;
     origW: number;
     origH: number;
+    origX1?: number;
+    origY1?: number;
+    origX2?: number;
+    origY2?: number;
+  } | null>(null);
+
+  // Rotation state for stamps
+  const [rotatingStamp, setRotatingStamp] = useState<{
+    id: string;
+    centerX: number;
+    centerY: number;
+    initialAngle: number;
+    initialRotation: number;
   } | null>(null);
 
   // Pointer Down on overlay
@@ -198,7 +216,11 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
     if (toolMode === 'shape') {
       isInteracting.current = true;
       startPoint.current = { x: ptX, y: ptY };
-      setLiveShapeRect({ x: ptX, y: ptY, w: 0, h: 0 });
+      if (activeShapeType === 'line' || activeShapeType === 'arrow') {
+        setLiveLine({ x1: ptX, y1: ptY, x2: ptX, y2: ptY });
+      } else {
+        setLiveShapeRect({ x: ptX, y: ptY, w: 0, h: 0 });
+      }
       return;
     }
 
@@ -232,6 +254,19 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
     const ptX = screenX / scale;
     const ptY = screenY / scale;
 
+    // 0. Rotating stamp
+    if (rotatingStamp) {
+      const dx = e.clientX - rotatingStamp.centerX;
+      const dy = e.clientY - rotatingStamp.centerY;
+      const currentAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+      const diff = currentAngle - rotatingStamp.initialAngle;
+      let newRot = Math.round(rotatingStamp.initialRotation + diff);
+      while (newRot > 180) newRot -= 360;
+      while (newRot < -180) newRot += 360;
+      onUpdateStamp?.(rotatingStamp.id, { rotation: newRot });
+      return;
+    }
+
     // A. Dragging text, image, shape, stamp, signature, or whiteout
     if (dragItem) {
       const dx = ptX - dragItem.startX;
@@ -248,10 +283,15 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
           y: Math.round(dragItem.origY + dy),
         });
       } else if (dragItem.type === 'shape' && onUpdateShape) {
-        onUpdateShape(dragItem.id, {
+        const updates: Partial<ShapeElement> = {
           x: Math.round(dragItem.origX + dx),
           y: Math.round(dragItem.origY + dy),
-        });
+        };
+        if (dragItem.origX1 !== undefined) updates.x1 = Math.round(dragItem.origX1 + dx);
+        if (dragItem.origY1 !== undefined) updates.y1 = Math.round(dragItem.origY1 + dy);
+        if (dragItem.origX2 !== undefined) updates.x2 = Math.round(dragItem.origX2 + dx);
+        if (dragItem.origY2 !== undefined) updates.y2 = Math.round(dragItem.origY2 + dy);
+        onUpdateShape(dragItem.id, updates);
       } else if (dragItem.type === 'stamp' && onUpdateStamp) {
         onUpdateStamp(dragItem.id, {
           x: Math.round(dragItem.origX + dx),
@@ -275,6 +315,33 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
     if (resizeHandle) {
       const dx = ptX - resizeHandle.startX;
       const dy = ptY - resizeHandle.startY;
+
+      // Handle endpoints for line and arrow (p1 and p2)
+      if (resizeHandle.type === 'shape' && (resizeHandle.handle === 'p1' || resizeHandle.handle === 'p2')) {
+        const isP1 = resizeHandle.handle === 'p1';
+        const curX1 = isP1 ? Math.round(ptX) : (resizeHandle.origX1 ?? resizeHandle.origX);
+        const curY1 = isP1 ? Math.round(ptY) : (resizeHandle.origY1 ?? resizeHandle.origY);
+        const curX2 = !isP1 ? Math.round(ptX) : (resizeHandle.origX2 ?? (resizeHandle.origX + resizeHandle.origW));
+        const curY2 = !isP1 ? Math.round(ptY) : (resizeHandle.origY2 ?? (resizeHandle.origY + resizeHandle.origH));
+
+        const minX = Math.min(curX1, curX2);
+        const minY = Math.min(curY1, curY2);
+        const w = Math.max(2, Math.abs(curX2 - curX1));
+        const h = Math.max(2, Math.abs(curY2 - curY1));
+
+        onUpdateShape?.(resizeHandle.id, {
+          x: minX,
+          y: minY,
+          width: w,
+          height: h,
+          x1: curX1,
+          y1: curY1,
+          x2: curX2,
+          y2: curY2,
+        });
+        return;
+      }
+
       let newW = resizeHandle.origW;
       let newH = resizeHandle.origH;
       let newX = resizeHandle.origX;
@@ -327,17 +394,27 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
 
     // D. Creating Shape or Whiteout
     if (isInteracting.current && (toolMode === 'shape' || toolMode === 'whiteout') && startPoint.current) {
-      const minX = Math.min(startPoint.current.x, ptX);
-      const minY = Math.min(startPoint.current.y, ptY);
-      const w = Math.abs(ptX - startPoint.current.x);
-      const h = Math.abs(ptY - startPoint.current.y);
-      setLiveShapeRect({ x: minX, y: minY, w, h });
+      if (toolMode === 'shape' && (activeShapeType === 'line' || activeShapeType === 'arrow')) {
+        setLiveLine({
+          x1: startPoint.current.x,
+          y1: startPoint.current.y,
+          x2: ptX,
+          y2: ptY,
+        });
+      } else {
+        const minX = Math.min(startPoint.current.x, ptX);
+        const minY = Math.min(startPoint.current.y, ptY);
+        const w = Math.abs(ptX - startPoint.current.x);
+        const h = Math.abs(ptY - startPoint.current.y);
+        setLiveShapeRect({ x: minX, y: minY, w, h });
+      }
     }
   };
 
   // Pointer Up on overlay
   const handlePointerUp = () => {
-    // End dragging
+    // End dragging or rotating
+    if (rotatingStamp) setRotatingStamp(null);
     if (dragItem) setDragItem(null);
     if (resizeHandle) setResizeHandle(null);
 
@@ -356,22 +433,51 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
           });
         }
         setCurrentDrawingPoints([]);
-      } else if (toolMode === 'shape' && liveShapeRect && liveShapeRect.w > 4 && liveShapeRect.h > 4) {
-        onAddShape({
-          id: `shape-${Date.now()}`,
-          pageIndex,
-          type: activeShapeType,
-          x: Math.round(liveShapeRect.x),
-          y: Math.round(liveShapeRect.y),
-          width: Math.round(liveShapeRect.w),
-          height: Math.round(liveShapeRect.h),
-          strokeColor: '#000000',
-          fillColor: 'transparent',
-          strokeWidth: 2,
-          opacity: 1,
-          zIndex: 15,
-        });
-        setLiveShapeRect(null);
+      } else if (toolMode === 'shape') {
+        if (liveLine) {
+          const dist = Math.hypot(liveLine.x2 - liveLine.x1, liveLine.y2 - liveLine.y1);
+          if (dist > 4) {
+            const minX = Math.min(liveLine.x1, liveLine.x2);
+            const minY = Math.min(liveLine.y1, liveLine.y2);
+            const w = Math.max(2, Math.abs(liveLine.x2 - liveLine.x1));
+            const h = Math.max(2, Math.abs(liveLine.y2 - liveLine.y1));
+            onAddShape({
+              id: `shape-${Date.now()}`,
+              pageIndex,
+              type: activeShapeType,
+              x: Math.round(minX),
+              y: Math.round(minY),
+              width: Math.round(w),
+              height: Math.round(h),
+              x1: Math.round(liveLine.x1),
+              y1: Math.round(liveLine.y1),
+              x2: Math.round(liveLine.x2),
+              y2: Math.round(liveLine.y2),
+              strokeColor: '#000000',
+              fillColor: 'transparent',
+              strokeWidth: 2,
+              opacity: 1,
+              zIndex: 15,
+            });
+          }
+          setLiveLine(null);
+        } else if (liveShapeRect && liveShapeRect.w > 4 && liveShapeRect.h > 4) {
+          onAddShape({
+            id: `shape-${Date.now()}`,
+            pageIndex,
+            type: activeShapeType,
+            x: Math.round(liveShapeRect.x),
+            y: Math.round(liveShapeRect.y),
+            width: Math.round(liveShapeRect.w),
+            height: Math.round(liveShapeRect.h),
+            strokeColor: '#000000',
+            fillColor: 'transparent',
+            strokeWidth: 2,
+            opacity: 1,
+            zIndex: 15,
+          });
+          setLiveShapeRect(null);
+        }
       } else if (toolMode === 'whiteout' && liveShapeRect && liveShapeRect.w > 4 && liveShapeRect.h > 4) {
         onAddWhiteout({
           id: `whiteout-${Date.now()}`,
@@ -393,6 +499,7 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
   return (
     <div
       ref={containerRef}
+      data-canvas-overlay="true"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -530,6 +637,10 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                   startY: ptY,
                   origX: s.x,
                   origY: s.y,
+                  origX1: s.x1,
+                  origY1: s.y1,
+                  origX2: s.x2,
+                  origY2: s.y2,
                 });
               }
             }}
@@ -563,37 +674,43 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                   opacity={s.opacity}
                 />
               )}
-              {(s.type === 'line' || s.type === 'arrow') && (
-                <g>
-                  <line
-                    x1={0}
-                    y1={0}
-                    x2={sw}
-                    y2={sh}
-                    stroke={isSelected ? '#3B82F6' : s.strokeColor}
-                    strokeWidth={(isSelected ? Math.max(3, s.strokeWidth) : s.strokeWidth) * scale}
-                    opacity={s.opacity}
-                  />
-                  {s.type === 'arrow' && (() => {
-                    const angle = Math.atan2(sh, sw);
-                    const headLength = Math.max(8, s.strokeWidth * scale * 3.5);
-                    const x1 = sw - headLength * Math.cos(angle - Math.PI / 6);
-                    const y1 = sh - headLength * Math.sin(angle - Math.PI / 6);
-                    const x2 = sw - headLength * Math.cos(angle + Math.PI / 6);
-                    const y2 = sh - headLength * Math.sin(angle + Math.PI / 6);
-                    return (
+              {(s.type === 'line' || s.type === 'arrow') && (() => {
+                const hasPoints = s.x1 !== undefined && s.y1 !== undefined && s.x2 !== undefined && s.y2 !== undefined;
+                const lx1 = hasPoints ? (s.x1! - s.x) * scale : 0;
+                const ly1 = hasPoints ? (s.y1! - s.y) * scale : 0;
+                const lx2 = hasPoints ? (s.x2! - s.x) * scale : sw;
+                const ly2 = hasPoints ? (s.y2! - s.y) * scale : sh;
+                const angle = Math.atan2(ly2 - ly1, lx2 - lx1);
+                const headLength = Math.max(10, s.strokeWidth * scale * 3.5);
+                const ax1 = lx2 - headLength * Math.cos(angle - Math.PI / 6);
+                const ay1 = ly2 - headLength * Math.sin(angle - Math.PI / 6);
+                const ax2 = lx2 - headLength * Math.cos(angle + Math.PI / 6);
+                const ay2 = ly2 - headLength * Math.sin(angle + Math.PI / 6);
+
+                return (
+                  <g>
+                    <line
+                      x1={lx1}
+                      y1={ly1}
+                      x2={lx2}
+                      y2={ly2}
+                      stroke={isSelected ? '#3B82F6' : s.strokeColor}
+                      strokeWidth={(isSelected ? Math.max(3, s.strokeWidth) : s.strokeWidth) * scale}
+                      opacity={s.opacity}
+                    />
+                    {s.type === 'arrow' && (
                       <polygon
-                        points={`${sw},${sh} ${x1},${y1} ${x2},${y2}`}
+                        points={`${lx2},${ly2} ${ax1},${ay1} ${ax2},${ay2}`}
                         fill={isSelected ? '#3B82F6' : s.strokeColor}
                         opacity={s.opacity}
                       />
-                    );
-                  })()}
-                </g>
-              )}
+                    )}
+                  </g>
+                );
+              })()}
             </svg>
 
-            {/* Resize Handles (8 handles) when selected */}
+            {/* Resize Handles (8 handles) for rectangle or circle */}
             {isSelected && (s.type === 'rectangle' || s.type === 'circle') && (
               <>
                 {['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map((h) => {
@@ -635,6 +752,70 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                 })}
               </>
             )}
+
+            {/* Endpoint handles for line and arrow */}
+            {isSelected && (s.type === 'line' || s.type === 'arrow') && (() => {
+              const hasPoints = s.x1 !== undefined && s.y1 !== undefined && s.x2 !== undefined && s.y2 !== undefined;
+              const lx1 = hasPoints ? (s.x1! - s.x) * scale : 0;
+              const ly1 = hasPoints ? (s.y1! - s.y) * scale : 0;
+              const lx2 = hasPoints ? (s.x2! - s.x) * scale : sw;
+              const ly2 = hasPoints ? (s.y2! - s.y) * scale : sh;
+
+              return (
+                <>
+                  <div
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      const rect = containerRef.current?.getBoundingClientRect();
+                      if (!rect) return;
+                      setResizeHandle({
+                        type: 'shape',
+                        id: s.id,
+                        handle: 'p1',
+                        startX: (e.clientX - rect.left) / scale,
+                        startY: (e.clientY - rect.top) / scale,
+                        origX: s.x,
+                        origY: s.y,
+                        origW: s.width,
+                        origH: s.height,
+                        origX1: s.x1 ?? s.x,
+                        origY1: s.y1 ?? s.y,
+                        origX2: s.x2 ?? (s.x + s.width),
+                        origY2: s.y2 ?? (s.y + s.height),
+                      });
+                    }}
+                    className="resize-handle absolute w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full shadow-md z-30 cursor-crosshair -translate-x-1/2 -translate-y-1/2"
+                    style={{ left: lx1, top: ly1 }}
+                    title="Початок стрілки/лінії (потягніть для переміщення)"
+                  />
+                  <div
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      const rect = containerRef.current?.getBoundingClientRect();
+                      if (!rect) return;
+                      setResizeHandle({
+                        type: 'shape',
+                        id: s.id,
+                        handle: 'p2',
+                        startX: (e.clientX - rect.left) / scale,
+                        startY: (e.clientY - rect.top) / scale,
+                        origX: s.x,
+                        origY: s.y,
+                        origW: s.width,
+                        origH: s.height,
+                        origX1: s.x1 ?? s.x,
+                        origY1: s.y1 ?? s.y,
+                        origX2: s.x2 ?? (s.x + s.width),
+                        origY2: s.y2 ?? (s.y + s.height),
+                      });
+                    }}
+                    className="resize-handle absolute w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full shadow-md z-30 cursor-crosshair -translate-x-1/2 -translate-y-1/2"
+                    style={{ left: lx2, top: ly2 }}
+                    title="Кінець стрілки/лінії (потягніть для переміщення)"
+                  />
+                </>
+              );
+            })()}
           </div>
         );
       })}
@@ -693,6 +874,39 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
             strokeDasharray="4,4"
             fill={toolMode === 'whiteout' ? 'rgba(255, 255, 255, 0.8)' : 'rgba(37, 99, 235, 0.1)'}
           />
+        )}
+
+        {/* Live line / arrow preview during 2-point drag */}
+        {liveLine && (
+          <g>
+            <line
+              x1={liveLine.x1 * scale}
+              y1={liveLine.y1 * scale}
+              x2={liveLine.x2 * scale}
+              y2={liveLine.y2 * scale}
+              stroke="#2563EB"
+              strokeWidth={2 * scale}
+              strokeDasharray="4,4"
+            />
+            {activeShapeType === 'arrow' && (() => {
+              const sx = liveLine.x1 * scale;
+              const sy = liveLine.y1 * scale;
+              const ex = liveLine.x2 * scale;
+              const ey = liveLine.y2 * scale;
+              const angle = Math.atan2(ey - sy, ex - sx);
+              const headLength = Math.max(10, 2 * scale * 3.5);
+              const x1 = ex - headLength * Math.cos(angle - Math.PI / 6);
+              const y1 = ey - headLength * Math.sin(angle - Math.PI / 6);
+              const x2 = ex - headLength * Math.cos(angle + Math.PI / 6);
+              const y2 = ey - headLength * Math.sin(angle + Math.PI / 6);
+              return (
+                <polygon
+                  points={`${ex},${ey} ${x1},${y1} ${x2},${y2}`}
+                  fill="#2563EB"
+                />
+              );
+            })()}
+          </g>
         )}
       </svg>
 
@@ -1151,6 +1365,34 @@ export const CanvasOverlay: React.FC<CanvasOverlayProps> = ({
                 </span>
               )}
             </div>
+
+            {/* Rotation Handle */}
+            {isSelected && (
+              <div
+                className="resize-handle absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center cursor-grab active:cursor-grabbing z-40 select-none pointer-events-auto"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  const rect = containerRef.current?.getBoundingClientRect();
+                  if (!rect) return;
+                  const centerX = rect.left + (stamp.x + stamp.width / 2) * scale;
+                  const centerY = rect.top + (stamp.y + stamp.height / 2) * scale;
+                  const initialAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI);
+                  setRotatingStamp({
+                    id: stamp.id,
+                    centerX,
+                    centerY,
+                    initialAngle,
+                    initialRotation: stamp.rotation ?? -4,
+                  });
+                }}
+                title="Потягніть для обертання штампа"
+              >
+                <div className="w-3.5 h-3.5 rounded-full bg-white border-2 border-blue-600 shadow-md flex items-center justify-center hover:scale-125 transition-transform">
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                </div>
+                <div className="w-0.5 h-3 bg-blue-500" />
+              </div>
+            )}
           </div>
         );
       })}
