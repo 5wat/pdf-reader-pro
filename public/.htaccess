@@ -1,6 +1,13 @@
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+
+  # Force HTTPS
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP:CF-Visitor} !{"scheme":"https"}
+  RewriteRule (.*) https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
