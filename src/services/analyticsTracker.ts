@@ -112,7 +112,6 @@ function detectReferrer(): { referrer: string; category: string } {
     if (host.includes('linkedin.')) return { referrer: 'LinkedIn', category: 'Соцмережі' };
     if (host.includes('youtube.')) return { referrer: 'YouTube', category: 'Соцмережі' };
     if (host.includes('github.com')) return { referrer: 'GitHub', category: 'Партнери' };
-    if (host.includes('infinityfree.')) return { referrer: 'InfinityFree', category: 'Хостинг' };
 
     return { referrer: host, category: 'Зовнішні сайти' };
   } catch {
@@ -215,7 +214,7 @@ export function initAnalytics(): void {
   } else {
     sessions.push(currentSession);
     saveStoredSessions(sessions);
-    // Send beacon to InfinityFree PHP backend if hosted
+    // Send beacon to backend if hosted
     pingServer('session_start', currentSession);
   }
 
@@ -312,7 +311,7 @@ export function trackThemeChange(theme: 'light' | 'dark'): void {
   trackEvent('theme', 'theme_switched', theme);
 }
 
-// Asynchronously pings InfinityFree PHP backend
+// Asynchronously pings backend
 function pingServer(action: string, data: any): void {
   try {
     const url = `/api/analytics.php?action=${encodeURIComponent(action)}`;
@@ -331,7 +330,7 @@ function pingServer(action: string, data: any): void {
   } catch {}
 }
 
-// Asynchronously syncs with InfinityFree PHP server to fetch global real visitor stats
+// Asynchronously syncs with server to fetch global real visitor stats
 export async function syncServerAnalytics(): Promise<void> {
   try {
     const res = await fetch('/api/analytics.php?action=stats');

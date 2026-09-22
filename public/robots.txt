@@ -1,6 +1,5 @@
 User-agent: *
 Allow: /
-Disallow: /api/data/
 Disallow: /#admin
 
-Sitemap: https://propdf.free.nf/sitemap.xml
+Sitemap: /sitemap.xml
